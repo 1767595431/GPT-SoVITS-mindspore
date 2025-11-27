@@ -26,4 +26,3 @@ voice_categories.json
 *.log
 GPT_SoVITS/output/
 GPT_SoVITS/logs_*/
-mindaudio
