@@ -1,0 +1,35 @@
+conda create -n GPTSoVits python=3.10 -y
+conda activate GPTSoVits
+====================================
+手动下载mindaudio放到本地
+git clone https://ghproxy.cn/https://github.com/mindspore-lab/mindaudio.git
+cd mindaudio
+pip install .
+===========================
+回到项目根目录继续安装其它依赖：
+安装剩余依赖（不再重新克隆 mindaudio）：
+cd ..
+pip install -r requirements.txt --no-deps -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+安装mindspore-2.3.1-cp310-cp310-linux_aarch64.whl（用本地离线包安装）
+
+pip install mindspore-2.3.1-cp310-cp310-linux_aarch64.whl
+
+pip install decorator attrs psutil jinja2 absl-py cloudpickle tornado ml-dtypes -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+pip install py3langid -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install packaging safetensors protobuf==3.20.3 sympy
+pip install numpy==1.24.4 asttokens==2.2.1 astunparse==1.6.3 okenizers==0.13.3 addict datasets evaluate pyctcdecode regex 
+pip install aiofiles aiohttp altair fastapi ffmpy httpx huggingface-hub markdown-it-py matplotlib mdit-py-plugins orjson pandas pydantic pydub python-multipart semantic-version typing-extensions uvicorn websockets fsspec resampy scikit-learn soundfile joblib pooch audioread
+pip install proces nltk rapidfuzz future
+pip install "tokenizers>=0.15,<0.19"
+pip install "gradio==3.41.2" "markdown-it-py<3" linkify-it-py mdit-py-plugins
+pip install addict datasets
+
+将LangSegment（这是2.0版本的）放到python环境中（/root/miniconda3/envs/GPTSoVits/lib/python3.10/site-packages）
+
+注意nltk_data文件夹要放到root的根目录下
+
+conda install ffmpeg -y
+
+之后就安装完毕了

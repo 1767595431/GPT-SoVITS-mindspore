@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>音模管理与合成</title>
+  <style>
+    :root { --bg:#0b1220; --card:#111a2b; --muted:#94a3b8; --text:#e2e8f0; --accent:#22c55e; --danger:#ef4444; --warn:#f59e0b; --border:#233047; --primary:#2e7bcf; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "PingFang SC", "Microsoft YaHei"; }
+    .container { max-width: 2880px; margin: 0 auto; padding: 24px; }
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{font-weight:700;font-size:18px;letter-spacing:.3px;color:var(--text)}
+    .brand small{font-weight:400;color:var(--muted)}
+    h2{margin:0 0 10px 0;padding:0;font-size:16px;color:var(--text)}
+    .row{display:grid;grid-template-columns:repeat(2,minmax(300px,1fr));gap:16px}
+    .row.row-wide{grid-template-columns:0.5fr 1.5fr}
+    @media (max-width: 980px){.row{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+    label{display:block;margin:8px 0 6px;color:var(--muted);font-size:12px}
+    input,select,button{padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#0d1626;color:var(--text);outline:none}
+    input:focus,select:focus{border-color:#2e7bcf;box-shadow:0 0 0 2px rgba(46,123,207,.25)}
+    input[type=file]{border:none;padding:0;background:transparent}
+    button{cursor:pointer;background:#0d1626;color:var(--text);border:1px solid var(--border);transition:.15s;border-radius:8px}
+    button:hover{border-color:#2e7bcf}
+    button.secondary{background:#132338}
+    .inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .muted{color:var(--muted);font-size:12px}
+    .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#0d1626}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+    table{width:100%;border-collapse:collapse;margin-top:8px;border:1px solid var(--border)}
+    thead th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:10px;background:#0d1626;border-bottom:1px solid var(--border)}
+    tbody td{padding:10px;border-top:1px solid var(--border)}
+    tbody tr:hover{background:#0d1626}
+    .actions button{margin-right:8px}
+    /* 紧凑表单栅格：两列(标签/控件) */
+    #createForm, #synthBox{display:grid;grid-template-columns:140px 1fr;column-gap:16px;row-gap:8px;align-items:center}
+    #createForm label, #synthBox label{margin:0}
+    #createForm button{grid-column:2/3;justify-self:start}
+    #s_msg{grid-column:1/-1}
+    /* 美化音频播放器 */
+    .aplayer{display:flex;align-items:center;gap:10px;background:#0d1626;border:1px solid var(--border);border-radius:10px;padding:6px 10px;width:280px}
+    .aplayer .aplay{width:30px;height:30px;border:1px solid var(--border);border-radius:50%;background:#132338;color:#e2e8f0;cursor:pointer}
+    .aplayer .aplay:hover{border-color:#2e7bcf}
+    .aplayer .arange{appearance:none;-webkit-appearance:none;width:150px;height:4px;background:#233047;border-radius:999px;outline:none}
+    .aplayer .arange::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#2e7bcf;border:0}
+    .aplayer .atime{font-size:12px;color:var(--muted);width:60px;text-align:right}
+    .modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:1000}
+    .modal.show{display:flex}
+    .modal-content{background:#111a2b;border:1px solid var(--border);border-radius:10px;padding:20px;width:360px;max-width:90%}
+    .modal-content h3{margin:0 0 12px;font-size:16px}
+    .modal-content select{width:100%;min-height:140px;background:#0d1626;color:var(--text);border:1px solid var(--border);border-radius:8px}
+    .modal-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:12px}
+    .dropdown{position:relative;width:100%}
+    .dropdown-toggle{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:#0d1626;color:var(--text);text-align:left}
+    .dropdown-menu{position:absolute;top:100%;left:0;width:100%;background:#0d1626;border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow:auto;box-shadow:0 10px 25px rgba(0,0,0,.5);display:none;z-index:10}
+    .dropdown.open .dropdown-menu{display:block}
+    .dropdown-item{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:14px;color:var(--text)}
+    .dropdown-item input{accent-color:var(--primary)}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">音模管理中心 <small>/ GPT-SoVITS</small></div>
+      <div class="toolbar">
+        <span class="badge"><span class="dot"></span> 在线</span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:16px">
+      <div class="card" style="width:100%">
+        <h2>分类管理</h2>
+        <form id="categoryForm" class="inline" style="flex-wrap:wrap;gap:12px">
+          <label style="min-width:120px">分类名称</label>
+          <input id="cat_name" placeholder="分类名称"/>
+          <label style="min-width:120px">描述</label>
+          <input id="cat_desc" placeholder="可选描述"/>
+          <span class="muted">提交后自动生成分类ID</span>
+          <button type="submit">新增分类</button>
+        </form>
+        <div class="muted" id="cat_msg" style="margin-top:6px"></div>
+        <table style="margin-top:12px">
+          <thead><tr><th>分类ID</th><th>名称</th><th>描述</th><th>创建时间</th><th>操作</th></tr></thead>
+          <tbody id="catBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="row row-wide">
+      <div class="card">
+      <h2>新增音模</h2>
+      <form id="createForm">
+        <label>音模名</label>
+        <input name="model_name" required />
+        <label>音模标识名（仅字母数字）</label>
+        <input name="model_id" required pattern="[A-Za-z0-9_-]+" />
+        <label>音模性别</label>
+        <select name="gender">
+          <option value="1">男</option>
+          <option value="2">女</option>
+        </select>
+        <label>参考文本</label>
+        <input name="prompt_text" placeholder="可留空" />
+        <label>参考文本语种</label>
+        <select name="prompt_language">
+          <option>中文</option>
+          <option>英文</option>
+          <option>日文</option>
+          <option>中英混合</option>
+          <option>日英混合</option>
+          <option>多语种混合</option>
+        </select>
+        <label>所属分类（多选）</label>
+        <div class="dropdown" id="createCatDropdown">
+          <button type="button" class="dropdown-toggle" id="createCatToggle">请选择分类</button>
+        <div class="dropdown-menu" id="createCatMenu"></div>
+        </div>
+        <div class="muted" style="grid-column:1/-1">默认不分类，可多选。</div>
+        <label>头像</label>
+        <input type="file" name="avatar" accept="image/*" required />
+        <label>参考音频</label>
+        <input type="file" name="refer_wav" accept="audio/*" required />
+        <div style="margin-top:12px"><button type="submit">提交</button></div>
+      </form>
+      <div id="createMsg" class="muted"></div>
+      </div>
+
+      <div class="card">
+      <h2>音模列表</h2>
+      <div class="inline">
+        <label>按名称搜索</label>
+        <input id="nameFilter" placeholder="输入音模名关键词" />
+        <button class="secondary" id="nameSearchBtn">搜索</button>
+        <label>分类筛选</label>
+        <select id="categoryFilter">
+          <option value="">全部</option>
+        </select>
+        <label>每页</label>
+        <select id="pageSize">
+          <option>5</option><option selected>10</option><option>20</option>
+        </select>
+        <button class="secondary" id="refreshBtn">刷新</button>
+      </div>
+      <table>
+        <thead><tr><th>头像</th><th>名称</th><th>标识</th><th>性别</th><th>分类</th><th>创建时间</th><th>参考音频</th><th>操作</th></tr></thead>
+        <tbody id="listBody"></tbody>
+      </table>
+      <div class="inline" style="margin-top:8px">
+        <button class="secondary" id="prevBtn">上一页</button>
+        <span id="pager" class="muted"></span>
+        <button class="secondary" id="nextBtn">下一页</button>
+      </div>
+      </div>
+    </div>
+
+    <div class="row row-wide" style="margin-top:16px">
+      <div class="card">
+      <h2>选择音模进行合成</h2>
+      <div id="synthBox">
+        <label>音模</label>
+        <select id="s_model"></select>
+        <label>用户ID</label>
+        <input id="user_id" placeholder="请输入用户ID（必填）" />
+        <label>任务ID</label>
+        <input id="task_id" placeholder="可留空，自动生成" />
+        <label>目标文本</label>
+        <input id="s_text" placeholder="请输入要合成的文本" />
+        <label>目标语种</label>
+        <select id="s_text_lang">
+          <option>中文</option>
+          <option>英文</option>
+          <option>日文</option>
+          <option>中英混合</option>
+          <option>日英混合</option>
+          <option>多语种混合</option>
+        </select>
+        <label>切分策略</label>
+        <select id="s_cut">
+          <option>凑四句一切</option>
+          <option>凑50字一切</option>
+          <option>按中文句号。切</option>
+          <option>按英文句号.切</option>
+          <option>按标点符号切</option>
+        </select>
+        <div class="inline" style="margin-top:12px;grid-column:1/-1">
+          <button id="t_btn" class="secondary">提交任务（排队）</button>
+        </div>
+        <div id="s_msg" class="muted" style="margin-top:6px"></div>
+      </div>
+      </div>
+      <div class="card">
+      <h2>任务列表</h2>
+      <div class="inline">
+        <label>用户ID</label>
+        <input id="t_user_id" placeholder="输入用户ID后应用筛选" />
+        <label>任务ID列表</label>
+        <input id="q_task_ids" placeholder="（可选）逗号或空格分隔多个任务ID" />
+        <button id="q_btn" class="secondary">应用筛选</button>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <label>每页</label>
+        <select id="t_pageSize">
+          <option>5</option><option selected>10</option><option>20</option>
+        </select>
+        <button class="secondary" id="t_refreshBtn">刷新</button>
+      </div>
+      <table>
+        <thead><tr><th>任务ID</th><th>用户ID</th><th>状态</th><th>进度</th><th>段数</th><th>创建时间</th><th>更新</th><th>结果</th><th>操作</th></tr></thead>
+        <tbody id="t_listBody"></tbody>
+      </table>
+      <div class="inline" style="margin-top:8px">
+        <button class="secondary" id="t_prevBtn">上一页</button>
+        <span id="t_pager" class="muted"></span>
+        <button class="secondary" id="t_nextBtn">下一页</button>
+      </div>
+      </div>
+    </div>
+  </div>
+
+    <div id="catModal" class="modal">
+    <div class="modal-content">
+      <h3>设置音模分类</h3>
+        <div class="dropdown" id="modalCatDropdown">
+          <button type="button" class="dropdown-toggle" id="modalCatToggle">请选择分类</button>
+          <div class="dropdown-menu" id="modalCatMenu"></div>
+        </div>
+      <div class="modal-actions">
+        <button id="catModalConfirm">确定</button>
+        <button id="catModalCancel" class="secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const API = location.origin;
+    let page=1,total=0,pageSize=10;
+    let t_page=1,t_total=0,t_pageSize=10;
+    const taskFilter = { userId: "", taskIds: [] };
+    const categoryMsg = ()=>$('#cat_msg');
+    let categoryFilterValue = "";
+    let categoryList = [];
+    let createSelectedCategories = [];
+    let modalSelectedCategories = [];
+    // 自动刷新控制：预览播放时暂停刷新，避免预览被列表刷新清掉
+    let autoRefreshSuspendedUntil = 0;
+    function suspendAutoRefresh(ms=5000){
+      autoRefreshSuspendedUntil = Date.now() + ms;
+    }
+
+    async function createModel(e){
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      fd.delete('categories');
+      createSelectedCategories.forEach(cat=>fd.append('categories', cat));
+      const resp = await fetch(`${API}/voice-models`, {method:'POST', body: fd});
+      const data = await resp.json();
+      $('#createMsg').textContent = data.code===0? '创建成功' : ('失败：'+(data.message||resp.status));
+      if(data.code===0){
+        e.target.reset();
+        createSelectedCategories = [];
+        updateCreateDropdownLabel();
+        loadList();
+      }
+    }
+
+    async function loadList(){
+      pageSize = parseInt($('#pageSize').value,10);
+      const name = encodeURIComponent(($('#nameFilter').value||'').trim());
+      const categoryParam = categoryFilterValue ? `&category=${encodeURIComponent(categoryFilterValue)}` : "";
+      const resp = await fetch(`${API}/voice-models?page=${page}&page_size=${pageSize}${name?`&name=${name}`:''}${categoryParam}`);
+      const payload = await resp.json();
+      const pg = payload && payload.data ? payload.data : { total:0, pageIndex:page, pageSize:pageSize, data:[] };
+      total = pg.total || 0;
+      const tbody = $('#listBody');
+      tbody.innerHTML = '';
+      const items = pg.data || [];
+      const sModel = $('#s_model');
+      sModel.innerHTML = '';
+      for(const it of items){
+        const tr = document.createElement('tr');
+        const dt = new Date((it.created_at||0)*1000).toLocaleString();
+        tr.innerHTML = `<td><img src="${it.avatar_url || it.avatar_path}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" /></td>
+                        <td>${it.model_name||''}</td>
+                        <td>${it.model_id||''}</td>
+                        <td>${it.gender==1?'男':'女'}</td>
+                        <td>${(it.categories||[]).map(cid=>renderCategoryName(cid)).join(', ') || '-'}</td>
+                        <td>${dt}</td>
+                        <td><div class="aplayer" data-url="${it.refer_wav_url||''}"></div></td>
+                        <td class="actions">
+                          <button data-id="${it.model_id}" class="detail">详情</button>
+                          <button data-id="${it.model_id}" class="del">删除</button>
+                          <button data-id="${it.model_id}" data-cats="${(it.categories||[]).join(',')}" class="set-cat">设置分类</button>
+                        </td>`;
+        tbody.appendChild(tr);
+        const opt = document.createElement('option');
+        opt.value = it.model_id; opt.textContent = `${it.model_name}(${it.model_id})`;
+        sModel.appendChild(opt);
+        initAPlayersIn(tr);
+      }
+      $('#pager').textContent = `第 ${page} 页 / 共 ${Math.ceil(total/pageSize)||1} 页（共 ${total} 条）`;
+      // 绑定详情与删除
+      tbody.querySelectorAll('button.detail').forEach(btn=>btn.onclick=()=>{
+        const id = btn.getAttribute('data-id');
+        const found = (items||[]).find(x=>x.model_id===id);
+        if(found){
+          alert(`音模: ${found.model_name}\n标识: ${found.model_id}\n性别: ${found.gender==1?'男':'女'}\n参考文本:\n${found.prompt_text||''}`);
+        }
+      });
+      tbody.querySelectorAll('button.del').forEach(btn=>btn.onclick=async ()=>{
+        const id = btn.getAttribute('data-id');
+        if(!confirm('确认删除该音模？')) return;
+        const resp = await fetch(`${API}/voice-models/${id}`, {method:'DELETE'});
+        const data = await resp.json();
+        alert(data.code===0?'删除成功':('失败：'+(data.message||resp.status)));
+        loadList();
+      });
+      tbody.querySelectorAll('button.set-cat').forEach(btn=>btn.onclick=()=>editModelCategories(btn.getAttribute('data-id'), btn.getAttribute('data-cats')||""));
+    }
+
+    
+
+    function genTaskId(){
+      // 前端生成：时间戳+随机
+      return 'T'+Date.now().toString(36)+Math.random().toString(36).slice(2,8).toUpperCase();
+    }
+
+    async function submitTask(){
+      const model_id = $('#s_model').value;
+      const user_id = ($('#user_id').value||'').trim();
+      let task_id_input = ($('#task_id').value||'').trim();
+      const text = $('#s_text').value.trim();
+      const text_language = $('#s_text_lang').value;
+      const how_to_cut = $('#s_cut').value;
+      if(!user_id){ $('#s_msg').textContent='请填写用户ID'; return; }
+      if(!model_id || !text){ $('#s_msg').textContent='请先选择音模并填写文本'; return; }
+      const task_id = task_id_input || genTaskId();
+      if(!task_id_input){ $('#task_id').value = task_id; }
+      $('#s_msg').textContent = `任务已提交：${task_id}`;
+      const payload = { user_id, task_id, model_id, text, text_language, how_to_cut };
+      const resp = await fetch(`${API}/voice-tasks`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      const data = await resp.json();
+      if(data.code!==0){ $('#s_msg').textContent = '提交失败'; return; }
+      loadTasks();
+    }
+
+    function getAppliedUserId(){
+      return taskFilter.userId ? taskFilter.userId.trim() : "";
+    }
+
+    function parseTaskIds(raw){
+      return raw.split(/[\s,，、]+/).map(s=>s.trim()).filter(Boolean);
+    }
+
+    function renderCategoryName(cid){
+      const found = categoryList.find(c=>c.category_id===cid);
+      return found ? found.category_name : cid;
+    }
+
+    function genCategoryId(){
+      return 'cat_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    }
+
+    async function loadCategories(){
+      const resp = await fetch(`${API}/voice-categories`);
+      const payload = await resp.json();
+      categoryList = payload.data || payload.categories || [];
+      renderCategorySelects();
+      renderCategoryTable();
+    }
+
+    function renderCategorySelects(){
+      const filterSel = $('#categoryFilter');
+      if(filterSel){
+        filterSel.innerHTML = '<option value="">全部</option>';
+        categoryList.forEach(cat=>{
+          const opt = document.createElement('option');
+          opt.value = cat.category_id;
+          opt.textContent = cat.category_name;
+          filterSel.appendChild(opt);
+        });
+        filterSel.value = categoryFilterValue;
+      }
+      renderCreateCategoryDropdown();
+    }
+
+    function updateCreateDropdownLabel(){
+      const toggle = $('#createCatToggle');
+      if(!toggle) return;
+      toggle.textContent = createSelectedCategories.length
+        ? createSelectedCategories.map(id=>renderCategoryName(id)).join(', ')
+        : '请选择分类';
+    }
+
+    function renderCreateCategoryDropdown(){
+      createSelectedCategories = createSelectedCategories.filter(id=>categoryList.some(cat=>cat.category_id===id));
+      const menu = $('#createCatMenu');
+      if(!menu) return;
+      menu.innerHTML = '';
+      categoryList.forEach(cat=>{
+        const label = document.createElement('label');
+        label.className = 'dropdown-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = cat.category_id;
+        checkbox.checked = createSelectedCategories.includes(cat.category_id);
+        checkbox.onchange = ()=>{
+          const val = checkbox.value;
+          if(checkbox.checked){
+            if(!createSelectedCategories.includes(val)) createSelectedCategories.push(val);
+          }else{
+            createSelectedCategories = createSelectedCategories.filter(c=>c!==val);
+          }
+          updateCreateDropdownLabel();
+        };
+        const span = document.createElement('span');
+        span.textContent = `${cat.category_name} (${cat.category_id})`;
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        menu.appendChild(label);
+      });
+      updateCreateDropdownLabel();
+    }
+
+    function updateModalDropdownLabel(){
+      const toggle = $('#modalCatToggle');
+      if(!toggle) return;
+      toggle.textContent = modalSelectedCategories.length
+        ? modalSelectedCategories.map(id=>renderCategoryName(id)).join(', ')
+        : '请选择分类';
+    }
+
+    function renderModalCategoryDropdown(){
+      const menu = $('#modalCatMenu');
+      if(!menu) return;
+      modalSelectedCategories = modalSelectedCategories.filter(id=>categoryList.some(cat=>cat.category_id===id));
+      menu.innerHTML = '';
+      categoryList.forEach(cat=>{
+        const label = document.createElement('label');
+        label.className = 'dropdown-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = cat.category_id;
+        checkbox.checked = modalSelectedCategories.includes(cat.category_id);
+        checkbox.onchange = ()=>{
+          const val = checkbox.value;
+          if(checkbox.checked){
+            if(!modalSelectedCategories.includes(val)) modalSelectedCategories.push(val);
+          }else{
+            modalSelectedCategories = modalSelectedCategories.filter(c=>c!==val);
+          }
+          updateModalDropdownLabel();
+        };
+        const span = document.createElement('span');
+        span.textContent = `${cat.category_name} (${cat.category_id})`;
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        menu.appendChild(label);
+      });
+      updateModalDropdownLabel();
+    }
+
+    function renderCategoryTable(){
+      const tbody = $('#catBody');
+      if(!tbody) return;
+      tbody.innerHTML = '';
+      categoryList.forEach(cat=>{
+        const tr = document.createElement('tr');
+        const ct = new Date((cat.created_at||0)*1000).toLocaleString();
+        tr.innerHTML = `<td>${cat.category_id}</td>
+                        <td>${cat.category_name}</td>
+                        <td>${cat.description||''}</td>
+                        <td>${ct}</td>
+                        <td><button class="secondary del-cat" data-id="${cat.category_id}">删除</button></td>`;
+        tbody.appendChild(tr);
+      });
+      tbody.querySelectorAll('button.del-cat').forEach(btn=>btn.onclick=()=>deleteCategory(btn.getAttribute('data-id')));
+    }
+
+    async function deleteCategory(categoryId){
+      if(!confirm(`确认删除分类 ${categoryId} ?`)) return;
+      const resp = await fetch(`${API}/voice-categories/${categoryId}`, {method:'DELETE'});
+      const data = await resp.json();
+      alert(data.code===0?'删除成功':(data.message||'删除失败'));
+      loadCategories().then(()=>loadList());
+    }
+
+    async function loadTasks(){
+      t_pageSize = parseInt($('#t_pageSize').value,10);
+      const user_id = getAppliedUserId();
+      if(!user_id){ $('#t_pager').textContent = '请先填写用户ID后再查询任务'; return; }
+      let payload, pg;
+      if(taskFilter.taskIds.length>0){
+        const resp = await fetch(`${API}/voice-tasks/query`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ user_id, task_ids: taskFilter.taskIds })
+        });
+        payload = await resp.json();
+        pg = payload && payload.data ? payload.data : { total:0, pageIndex:1, pageSize:taskFilter.taskIds.length||1, data:[] };
+        t_total = pg.total || (pg.data||[]).length;
+        t_page = 1;
+      } else {
+        const url = `${API}/voice-tasks?user_id=${encodeURIComponent(user_id)}&page=${t_page}&page_size=${t_pageSize}`;
+        const resp = await fetch(url);
+        payload = await resp.json();
+        pg = payload && payload.data ? payload.data : { total:0, pageIndex:t_page, pageSize:t_pageSize, data:[] };
+        t_total = pg.total || 0;
+      }
+      const tbody = $('#t_listBody');
+      tbody.innerHTML = '';
+      const items = pg.data || [];
+      for(const it of items){
+        const tr = document.createElement('tr');
+        const ct = new Date((it.created_at||0)*1000).toLocaleString();
+        const ut = new Date((it.updated_at||0)*1000).toLocaleString();
+        const res_href = it.result_url || (it.result_path? it.result_path.replace(/^\./,'') : '');
+        tr.innerHTML = `<td>${it.task_id||''}</td>
+                        <td>${it.user_id||''}</td>
+                        <td>${it.status||''}</td>
+                        <td>${(it.progress||0)}%</td>
+                        <td>${(it.segments_done||0)}/${(it.total_segments||0)}</td>
+                        <td>${ct}</td>
+                        <td>${ut}</td>
+                        <td data-audio="${res_href||''}"></td>
+                        <td>
+                          <div class="inline">
+                            <button class="secondary preview-task" data-url="${res_href||''}">预览</button>
+                            <button class="secondary download-task" data-url="${res_href||''}">下载</button>
+                            <button class="secondary del-task" data-id="${it.task_id}">删除</button>
+                          </div>
+                        </td>`;
+        tbody.appendChild(tr);
+      }
+      // 绑定预览
+      tbody.querySelectorAll('button.preview-task').forEach(btn=>btn.onclick=()=>{
+        const url = btn.getAttribute('data-url');
+        if(!url){ alert('暂无可预览的音频'); return; }
+        let cell = btn.closest('tr').querySelector('td[data-audio]');
+        let wrap = cell.querySelector('.aplayer');
+        if(!wrap){
+          wrap = createPlayer(url, true);
+          cell.appendChild(wrap);
+        }else{
+          const audio = wrap._audio;
+          if(audio){ audio.src = url; suspendAutoRefresh(10000); audio.play().catch(()=>{}); }
+        }
+      });
+      // 绑定下载
+      tbody.querySelectorAll('button.download-task').forEach(btn=>btn.onclick=()=>{
+        const url = btn.getAttribute('data-url');
+        if(!url){ alert('暂无可下载的音频'); return; }
+        const a = document.createElement('a');
+        a.href = url; a.download = 'output.wav'; a.click();
+      });
+      // 绑定删除任务
+      tbody.querySelectorAll('button.del-task').forEach(btn=>btn.onclick=async ()=>{
+        const id = btn.getAttribute('data-id');
+        if(!confirm('确认删除该任务？')) return;
+        const resp = await fetch(`${API}/voice-tasks/${id}`, {method:'DELETE'});
+        const data = await resp.json();
+        if(data.code===0){ loadTasks(); } else { alert(data.message||'删除失败'); }
+      });
+      if(taskFilter.taskIds.length>0){
+        $('#t_pager').textContent = `按任务ID筛选，共 ${t_total} 条记录`;
+      }else{
+        $('#t_pager').textContent = `第 ${t_page} 页 / 共 ${Math.ceil(t_total/t_pageSize)||1} 页（共 ${t_total} 条）`;
+      }
+    }
+
+    function applyTaskFilter(){
+      const user_id = ($('#t_user_id').value||'').trim();
+      if(!user_id){ $('#t_pager').textContent = '请先填写用户ID后再查询任务'; return; }
+      const rawIds = ($('#q_task_ids').value||'').trim();
+      taskFilter.userId = user_id;
+      taskFilter.taskIds = rawIds ? parseTaskIds(rawIds) : [];
+      t_page = 1;
+      loadTasks();
+    }
+
+    let editingModelId = null;
+    function openCategoryModal(modelId, current){
+      editingModelId = modelId;
+      const currentIds = current?current.split(',').map(s=>s.trim()).filter(Boolean):[];
+      modalSelectedCategories = currentIds;
+      renderModalCategoryDropdown();
+      $('#catModal').classList.add('show');
+    }
+
+    function closeCategoryModal(){
+      editingModelId = null;
+      const dropdown = $('#modalCatDropdown');
+      if(dropdown) dropdown.classList.remove('open');
+      $('#catModal').classList.remove('show');
+    }
+
+    function editModelCategories(modelId, current){
+      if(!categoryList.length){
+        alert('请先创建分类');
+        return;
+      }
+      openCategoryModal(modelId, current);
+    }
+
+    // 绑定
+    $('#createForm').addEventListener('submit', createModel);
+    $('#createCatDropdown').addEventListener('click',(e)=>{
+      if(e.target.id==="createCatMenu" || e.target.closest('#createCatMenu')) return;
+      $('#createCatDropdown').classList.toggle('open');
+    });
+    $('#modalCatDropdown').addEventListener('click',(e)=>{
+      if(e.target.id==="modalCatMenu" || e.target.closest('#modalCatMenu')) return;
+      $('#modalCatDropdown').classList.toggle('open');
+    });
+    document.addEventListener('click',(e)=>{
+      const createDropdown = $('#createCatDropdown');
+      if(createDropdown && !createDropdown.contains(e.target)){
+        createDropdown.classList.remove('open');
+      }
+      const modalDropdown = $('#modalCatDropdown');
+      if(modalDropdown && !modalDropdown.contains(e.target)){
+        modalDropdown.classList.remove('open');
+      }
+    });
+    $('#categoryForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const category_name = ($('#cat_name').value||'').trim();
+      const description = ($('#cat_desc').value||'').trim();
+      if(!category_name){
+        categoryMsg().textContent='请填写分类名称';
+        return;
+      }
+      const category_id = genCategoryId();
+      const resp = await fetch(`${API}/voice-categories`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({category_id, category_name, description})
+      });
+      const data = await resp.json();
+      categoryMsg().textContent = data.code===0?`创建成功，ID: ${category_id}`:(data.message||'创建失败');
+      if(data.code===0){
+        $('#cat_name').value=''; $('#cat_desc').value='';
+        await loadCategories();
+        loadList();
+      }
+    });
+    $('#refreshBtn').onclick=()=>{page=1;loadList()};
+    $('#nameSearchBtn').onclick=()=>{page=1;loadList()};
+    $('#nameFilter').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); page=1; loadList(); } });
+    $('#prevBtn').onclick=()=>{if(page>1){page--;loadList()}};
+    $('#nextBtn').onclick=()=>{if(page*pageSize<total){page++;loadList()}};
+    $('#pageSize').onchange=()=>{page=1;loadList()};
+    
+    $('#t_btn').onclick=submitTask;
+    $('#t_refreshBtn').onclick=()=>{if(!taskFilter.userId){$('#t_pager').textContent='请先点击“应用筛选”';return;}loadTasks();};
+    $('#t_prevBtn').onclick=()=>{if(taskFilter.taskIds.length>0)return;if(t_page>1){t_page--;loadTasks()}};
+    $('#t_nextBtn').onclick=()=>{if(taskFilter.taskIds.length>0)return;if(t_page*t_pageSize<t_total){t_page++;loadTasks()}};
+    $('#t_pageSize').onchange=()=>{if(!taskFilter.userId){$('#t_pager').textContent='请先点击“应用筛选”';return;}t_page=1;loadTasks()};
+    $('#q_btn').onclick=applyTaskFilter;
+    $('#categoryFilter').onchange=()=>{categoryFilterValue=$('#categoryFilter').value;page=1;loadList();};
+    $('#catModalConfirm').onclick=()=>{
+      if(!editingModelId) { closeCategoryModal(); return; }
+      const catIds = [...modalSelectedCategories];
+      fetch(`${API}/voice-models/${editingModelId}/categories`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({categories: catIds})
+      }).then(r=>r.json()).then(data=>{
+        if(data.code===0){
+          closeCategoryModal();
+          loadList();
+        }else{
+          alert(data.message||'更新分类失败');
+        }
+      });
+    };
+    $('#catModalCancel').onclick=()=>{ closeCategoryModal(); };
+    $('#catModal').addEventListener('click',(e)=>{ if(e.target.id==='catModal'){ closeCategoryModal(); }});
+
+    // 定时刷新任务列表
+    function startAutoRefresh(){
+      setInterval(()=>{
+        if(Date.now() >= autoRefreshSuspendedUntil && taskFilter.userId){
+          loadTasks();
+        }
+      }, 2000);
+    }
+
+    // 简洁音频播放器实现
+    function formatTime(sec){
+      sec = Math.max(0, Math.floor(sec||0));
+      const m = String(Math.floor(sec/60)).padStart(2,'0');
+      const s = String(sec%60).padStart(2,'0');
+      return `${m}:${s}`;
+    }
+    function createPlayer(url, autoplay=false){
+      const wrap = document.createElement('div');
+      wrap.className = 'aplayer';
+      const btn = document.createElement('button'); btn.className='aplay'; btn.textContent='►';
+      const range = document.createElement('input'); range.type='range'; range.min=0; range.max=100; range.value=0; range.className='arange';
+      const t = document.createElement('span'); t.className='atime'; t.textContent='00:00';
+      const audio = new Audio(url||''); audio.preload='metadata';
+      wrap.appendChild(btn); wrap.appendChild(range); wrap.appendChild(t);
+      wrap._audio = audio;
+      btn.onclick = ()=>{ if(audio.paused){ audio.play().catch(()=>{}); } else { audio.pause(); } };
+      audio.addEventListener('play', ()=>{ btn.textContent='❚❚'; suspendAutoRefresh(60*60*1000); });
+      audio.addEventListener('pause', ()=>{ btn.textContent='►'; suspendAutoRefresh(2000); });
+      audio.addEventListener('ended', ()=>{ btn.textContent='►'; suspendAutoRefresh(2000); });
+      audio.addEventListener('timeupdate', ()=>{
+        if(audio.duration && !isNaN(audio.duration)){
+          range.value = Math.floor(audio.currentTime * 100 / audio.duration);
+          t.textContent = formatTime(audio.currentTime);
+        }
+      });
+      audio.addEventListener('loadedmetadata', ()=>{ t.textContent = formatTime(0); range.value = 0; });
+      range.addEventListener('input', ()=>{
+        if(audio.duration && !isNaN(audio.duration)){
+          audio.currentTime = (range.value/100) * audio.duration;
+        }
+      });
+      if(autoplay){ audio.play().catch(()=>{}); }
+      return wrap;
+    }
+    function initAPlayersIn(tr){
+      tr.querySelectorAll('.aplayer[data-url]').forEach(div=>{
+        const url = div.getAttribute('data-url');
+        const player = createPlayer(url, false);
+        div.parentNode.replaceChild(player, div);
+      });
+    }
+    loadCategories().then(()=>loadList());
+    loadTasks();
+    startAutoRefresh();
+  </script>
+</body>
+</html>
+
+
