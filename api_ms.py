@@ -231,6 +231,28 @@ _SUBDIR = os.path.join(_THIS_DIR, "GPT_SoVITS")
 if _SUBDIR not in sys.path:
     sys.path.append(_SUBDIR)
 
+# 确保 conda 环境的 bin 目录在 PATH 中（用于查找 ffmpeg 等工具）
+_conda_prefix = os.environ.get("CONDA_PREFIX")
+if _conda_prefix:
+    _conda_bin = os.path.join(_conda_prefix, "bin")
+    if os.path.exists(_conda_bin) and _conda_bin not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = _conda_bin + os.pathsep + os.environ.get("PATH", "")
+# 如果没有 CONDA_PREFIX，尝试从当前 Python 解释器路径推断 conda 环境
+elif not os.environ.get("FFMPEG_PATH"):
+    _python_exe = sys.executable
+    if _python_exe and "envs" in _python_exe:
+        # 如果 Python 在 conda 环境中，通常路径类似 .../envs/ENV_NAME/bin/python
+        try:
+            _env_base = _python_exe.split("envs")[0]
+            _env_name = _python_exe.split("envs")[1].split(os.sep)[1] if len(_python_exe.split("envs")) > 1 else None
+            if _env_name:
+                _bin_path = os.path.join(_env_base, "envs", _env_name, "bin")
+                if os.path.exists(_bin_path) and os.path.exists(os.path.join(_bin_path, "ffmpeg")):
+                    if _bin_path not in os.environ.get("PATH", "").split(os.pathsep):
+                        os.environ["PATH"] = _bin_path + os.pathsep + os.environ.get("PATH", "")
+        except Exception:
+            pass
+
 from feature_extractor import cnhubert
 from module.models import SynthesizerTrn
 from AR.models.t2s_model import Text2SemanticDecoder
@@ -393,6 +415,21 @@ dict_language = {
     "zh": "zh",
     "ja": "ja",
     "auto": "auto",
+}
+
+dict_cut = {
+    "不切": "cut0",
+    "凑四句一切": "cut1",
+    "凑50字一切": "cut2",
+    "按中文句号。切": "cut3",
+    "按英文句号.切": "cut4",
+    "按标点符号切": "cut5",
+    "cut0": "cut0",
+    "cut1": "cut1",
+    "cut2": "cut2",
+    "cut3": "cut3",
+    "cut4": "cut4",
+    "cut5": "cut5",
 }
 
 
@@ -577,7 +614,7 @@ def synthesize_once(
     prompt_language: str,
     text: str,
     text_language: str,
-    how_to_cut: str = "凑四句一切",
+    how_to_cut: str = "cut1",
     top_k: int = 5,
     top_p: float = 1.0,
     temperature: float = 1.0,
@@ -629,17 +666,19 @@ def synthesize_once(
     prompt_semantic = codes[0, 0]
     t1 = ttime()
 
-    # 切句
-    if how_to_cut == "凑四句一切":
+    # 切句（支持标识符）
+    how_to_cut = dict_cut.get(how_to_cut, how_to_cut)
+    if how_to_cut == "cut1" or how_to_cut == "凑四句一切":
         text = cut1(text)
-    elif how_to_cut == "凑50字一切":
+    elif how_to_cut == "cut2" or how_to_cut == "凑50字一切":
         text = cut2(text)
-    elif how_to_cut == "按中文句号。切":
+    elif how_to_cut == "cut3" or how_to_cut == "按中文句号。切":
         text = cut3(text)
-    elif how_to_cut == "按英文句号.切":
+    elif how_to_cut == "cut4" or how_to_cut == "按英文句号.切":
         text = cut4(text)
-    elif how_to_cut == "按标点符号切":
+    elif how_to_cut == "cut5" or how_to_cut == "按标点符号切":
         text = cut5(text)
+    # cut0 或 "不切" 或其他值：不切分，直接使用原始文本
     while "\n\n" in text:
         text = text.replace("\n\n", "\n")
     logger.info("实际输入的目标文本(切句后): %s", text)
@@ -808,10 +847,10 @@ def _run_task(task_id: str):
     # 参数
     model_id = task.get("model_id")
     text = task.get("text", "")
-    text_language = task.get("text_language", "中文")
-    how_to_cut = task.get("how_to_cut", "凑四句一切")
+    text_language = task.get("text_language", "all_zh")
+    how_to_cut = task.get("how_to_cut", "cut1")
     prompt_text = task.get("prompt_text", "")
-    prompt_language = task.get("prompt_language", "中文")
+    prompt_language = task.get("prompt_language", "all_zh")
     ref_wav_path = task.get("ref_wav_path")
 
     # 若有model_id，补全参考信息
@@ -845,18 +884,20 @@ def _run_task(task_id: str):
     logger.info("实际输入的目标文本: %s", text_adj)
     print("实际输入的目标文本:", text_adj)
 
-    # 切分并统计段数
-    if how_to_cut == "凑四句一切":
+    # 切分并统计段数（支持标识符）
+    how_to_cut = dict_cut.get(how_to_cut, how_to_cut)
+    if how_to_cut == "cut1" or how_to_cut == "凑四句一切":
         text_cut = cut1(text_adj)
-    elif how_to_cut == "凑50字一切":
+    elif how_to_cut == "cut2" or how_to_cut == "凑50字一切":
         text_cut = cut2(text_adj)
-    elif how_to_cut == "按中文句号。切":
+    elif how_to_cut == "cut3" or how_to_cut == "按中文句号。切":
         text_cut = cut3(text_adj)
-    elif how_to_cut == "按英文句号.切":
+    elif how_to_cut == "cut4" or how_to_cut == "按英文句号.切":
         text_cut = cut4(text_adj)
-    elif how_to_cut == "按标点符号切":
+    elif how_to_cut == "cut5" or how_to_cut == "按标点符号切":
         text_cut = cut5(text_adj)
     else:
+        # cut0 或 "不切" 或其他值：不切分，直接使用原始文本
         text_cut = text_adj
     while "\n\n" in text_cut:
         text_cut = text_cut.replace("\n\n", "\n")
@@ -1619,10 +1660,10 @@ async def synthesize(request: Request):
 
     ref_wav_path = req.get("ref_wav_path")
     prompt_text = req.get("prompt_text", "")
-    prompt_language = req.get("prompt_language", "中文")
+    prompt_language = req.get("prompt_language", "all_zh")
     text = req.get("text")
-    text_language = req.get("text_language", "中文")
-    how_to_cut = req.get("how_to_cut", "凑四句一切")
+    text_language = req.get("text_language", "all_zh")
+    how_to_cut = req.get("how_to_cut", "cut1")
     top_k = int(req.get("top_k", 5))
     top_p = float(req.get("top_p", 1))
     temperature = float(req.get("temperature", 1))
@@ -1677,7 +1718,7 @@ async def create_voice_model(
     model_id: str = Form(...),
     gender: int = Form(...),  # 1男 2女
     prompt_text: str = Form(""),
-    prompt_language: str = Form("中文"),
+    prompt_language: str = Form("all_zh"),
     avatar: UploadFile = File(...),
     refer_wav: UploadFile = File(...),
     categories: List[str] = Form(None),
@@ -1910,10 +1951,10 @@ async def submit_task(request: Request):
         # 透传参数
         "model_id": body.get("model_id"),
         "text": body.get("text", ""),
-        "text_language": body.get("text_language", "中文"),
-        "how_to_cut": body.get("how_to_cut", "凑四句一切"),
+        "text_language": body.get("text_language", "all_zh"),
+        "how_to_cut": body.get("how_to_cut", "cut1"),
         "prompt_text": body.get("prompt_text", ""),
-        "prompt_language": body.get("prompt_language", "中文"),
+        "prompt_language": body.get("prompt_language", "all_zh"),
         "ref_wav_path": body.get("ref_wav_path"),
         "top_k": int(body.get("top_k", 5)),
         "top_p": float(body.get("top_p", 1.0)),

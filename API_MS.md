@@ -30,66 +30,17 @@
 ### 端点速览（仅列出前端已调用的接口）
 
 - 音模新增：POST `/voice-models`
-- 音模列表：GET `/voice-models`（支持按名称查询 `?name=关键词`）
+- 音模列表：GET `/voice-models`（支持按名称查询 `?name=关键词` 和分类筛选 `?category=<cat_id>`）
 - 音模删除：DELETE `/voice-models/{model_id}`
+- 音模分类设置：POST `/voice-models/{model_id}/categories`
+- 分类列表：GET `/voice-categories`
+- 分类新增：POST `/voice-categories`
+- 分类删除：DELETE `/voice-categories/{category_id}`
 - 提交任务：POST `/voice-tasks`
-- 批量/分页任务：GET `/voice-tasks`（必须提供 `user_id`；可选 `task_id` 精准检索）
+- 分页查询任务：GET `/voice-tasks`（必须提供 `user_id`、`page`、`page_size`）
+- 多ID查询任务：POST `/voice-tasks/query`
 - 删除/取消任务：DELETE `/voice-tasks/{task_id}`
 - 静态资源：GET `/output/<user_id>/<task_id>/<task_id>.wav`（任务产物下载）
-
----
-
-## 健康检查
-
-GET `/healthz`
-
-响应：
-```json
-{ "status": "ok", "index_url": "http://<host>:9881/index" }
-```
-
----
-
-## 文本转语音（直连）
-
-POST `/synthesize`
-
-请求（application/json）：
-```json
-{
-  "ref_wav_path": "./audio/<model_id>/refer.wav",     // 可选：与 model_id 二选一
-  "prompt_text": "这是参考文本",                       // 可选
-  "prompt_language": "中文",                          // 可选：中文/英文/日文/中英混合/日英混合/多语种混合
-  "text": "需要合成的目标文本",                       // 必填
-  "text_language": "中文",                            // 必填（同上枚举）
-  "how_to_cut": "凑四句一切",                         // 可选：不切/凑四句一切/凑50字一切/按中文句号。切/按英文句号.切/按标点符号切
-  "top_k": 5,                                         // 可选
-  "top_p": 1.0,                                       // 可选
-  "temperature": 1.0,                                 // 可选
-  "ref_free": false,                                  // 可选：无参考文本模式
-  "model_id": "your_model_id",                        // 可选：提供则自动填充 ref_wav_path/prompt_text/prompt_language
-  "user_id": "U10001",                                // 可选：用于保存路径 output/<user_id>/<task_id>/<task_id>.wav
-  "task_id": "T20250101ABC123"                        // 可选：用于保存路径；不传则自动生成
-}
-```
-
-响应：音频流 `audio/wav`（返回整段 WAV 字节流）。
-
-示例（保存为 out.wav）：
-```bash
-curl -X POST "http://<host>:9881/synthesize" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "model_id": "example",
-    "text": "你好世界。",
-    "text_language": "中文",
-    "how_to_cut": "凑四句一切"
-  }' --output out.wav
-```
-
-注意：
-- `ref_wav_path` 需 3~10 秒长度；否则返回 500 错误。
-- `model_id` 存在时会作为默认来源；显式传参优先生效。
 
 ---
 
@@ -104,7 +55,7 @@ POST `/voice-models`（multipart/form-data）
 - `model_id`（string）音模标识（必填，仅字母数字`-_`）
 - `gender`（int）1=男，2=女（必填）
 - `prompt_text`（string）参考文本（可选）
-- `prompt_language`（string）参考文本语种（默认：中文）
+- `prompt_language`（string）参考文本语种标识符（默认：`all_zh`）。可选值：`all_zh`（中文）、`en`（英文）、`zh`（中英混合）
 - `categories`（array[string]）分类 ID，多选；可留空
 - `avatar`（file）头像（必填）
 - `refer_wav`（file）参考音频（必填，3~10秒）
@@ -135,7 +86,7 @@ curl -X POST "http://<host>:9881/voice-models" \
   -F model_id="example" \
   -F gender=1 \
   -F prompt_text="这是参考文本" \
-  -F prompt_language="中文" \
+  -F prompt_language="all_zh" \
   -F avatar=@./avatar.png \
   -F refer_wav=@./refer.wav
 ```
@@ -183,25 +134,79 @@ GET `/voice-models?page=1&page_size=10&name=关键词&category=<cat_id>`
 
 说明：删除后对应 `./audio/<model_id>` 目录被移除。
 
-- POST `/voice-models/{model_id}/categories`
+#### 设置音模分类
 
-请求：
+POST `/voice-models/{model_id}/categories`
+
+请求（application/json）：
 ```json
 { "categories": ["cat_a","cat_b"] }
+```
+
+响应：
+```json
+{ "code": 0, "message": "updated" }
 ```
 
 说明：分类必须已存在；传空数组则清空分类。
 
 ### 分类管理
 
-- GET `/voice-categories`：返回所有分类列表
-- POST `/voice-categories`
+#### 获取分类列表
 
+GET `/voice-categories`
+
+响应：
 ```json
-{ "category_id": "cn", "category_name": "中文主播", "description": "示例" }
+{
+  "code": 0,
+  "data": [
+    {
+      "category_id": "cn",
+      "category_name": "中文主播",
+      "description": "示例",
+      "created_at": 1730000000
+    }
+  ]
+}
 ```
 
-- DELETE `/voice-categories/{category_id}`：删除分类并自动从音模中移除该分类
+#### 新增分类
+
+POST `/voice-categories`
+
+请求（application/json）：
+```json
+{
+  "category_id": "cn",
+  "category_name": "中文主播",
+  "description": "示例"
+}
+```
+
+响应：
+```json
+{
+  "code": 0,
+  "data": {
+    "category_id": "cn",
+    "category_name": "中文主播",
+    "description": "示例",
+    "created_at": 1730000000
+  }
+}
+```
+
+#### 删除分类
+
+DELETE `/voice-categories/{category_id}`
+
+响应：
+```json
+{ "code": 0, "message": "deleted" }
+```
+
+说明：删除分类后会自动从所有音模中移除该分类。
 
 ---
 
@@ -218,10 +223,10 @@ POST `/voice-tasks`
   "task_id": "T20250101ABC123",            // 必填：前端生成（时间戳+随机）
   "model_id": "your_model_id",             // 建议提供
   "text": "需要合成的文本",                  // 必填
-  "text_language": "中文",                   // 必填
-  "how_to_cut": "凑四句一切",                // 可选（同直连）
+  "text_language": "all_zh",               // 必填：语种标识符。可选值：all_zh（中文）、en（英文）、zh（中英混合）
+  "how_to_cut": "cut1",                    // 可选：切分策略标识符。可选值：cut0（不切）、cut1（凑四句一切）、cut2（凑50字一切）、cut3（按中文句号。切）、cut4（按英文句号.切）、cut5（按标点符号切）。默认：cut1
   "prompt_text": "参考文本",                 // 可选
-  "prompt_language": "中文",                 // 可选
+  "prompt_language": "all_zh",             // 可选：参考文本语种标识符。可选值：all_zh（中文）、en（英文）、zh（中英混合）
   "ref_wav_path": "./audio/<model_id>/refer.wav", // 可选
   "top_k": 5,
   "top_p": 1.0,
@@ -274,11 +279,6 @@ Body：
 - 两种模式都共用 Redis 优先、JSON 兜底的查询逻辑。
 - `task_ids` 必须搭配 `user_id`，支持海量 ID 查询，避免 URL 过长。
 
-### 查询 / 删除单个任务
-
-- GET `/voice-tasks/{task_id}`：返回单条任务详情（优先 Redis，回退本地 JSON）。
-- DELETE `/voice-tasks/{task_id}`：取消/删除；若正在运行会标记取消，完成后清理输出与日志。
-
 ### 删除任务（包含取消运行中任务）
 
 DELETE `/voice-tasks/{task_id}`
@@ -294,15 +294,6 @@ DELETE `/voice-tasks/{task_id}`
 
 ---
 
-## 前端管理页面
-
-GET `/manager`
-
-- 提供简易管理 UI：上传音模、音模列表（含参考音频试听/详情/删除）、选择音模发起合成或提交任务、任务列表（进度/下载/删除）。
-- 任务列表每 2 秒自动刷新。
-
----
-
 ## 静态目录
 
 - `/audio`：头像与参考音频（示例：`/audio/<model_id>/avatar.png`、`/audio/<model_id>/refer.wav`）
@@ -312,9 +303,31 @@ GET `/manager`
 
 ## 其他说明
 
-- 语种枚举（`prompt_language`/`text_language`）：`中文`、`英文`、`日文`、`中英混合`、`日英混合`、`多语种混合`
+### 参数标识符
+
+#### 语种标识符（`prompt_language`/`text_language`）
+
+| 标识符 | 说明 |
+|--------|------|
+| `all_zh` | 中文 |
+| `en` | 英文 |
+| `zh` | 中英混合 |
+
+#### 切分策略标识符（`how_to_cut`）
+
+| 标识符 | 说明 |
+|--------|------|
+| `cut0` | 不切 |
+| `cut1` | 凑四句一切 |
+| `cut2` | 凑50字一切 |
+| `cut3` | 按中文句号。切 |
+| `cut4` | 按英文句号.切 |
+| `cut5` | 按标点符号切 |
+
+### 其他
+
 - 参考音频时长限制：3~10 秒
-- 输出目录：`./output/`（`synthesize` 直连模式与任务模式皆会保存）
+- 输出目录：`./output/`（任务模式保存）
 - 环境变量：
   - `is_half`（默认 True）半精模式
   - `infer_api_port`（默认 9881）端口
@@ -345,20 +358,19 @@ python api_ms.py --device 1 --host 0.0.0.0 --port 9881
 
 ## 常见错误
 
-- 400 缺少参数：检查 `text`、`text_language` 与参考来源（`model_id` 或 `ref_wav_path`）
+- 400 缺少参数：检查必填字段（如 `text`、`text_language`、`user_id`、`task_id`、`model_id` 等）
 - 404 音模不存在：检查 `model_id`
-- 500 模型/依赖错误：确认权重路径、`ffmpeg`/CUDA/MindSpore 环境
+- 500 模型/依赖错误：确认权重路径、`ffmpeg`/MindSpore 环境
 
 ---
 
 ## 状态码与返回类型（约定）
 
-- 除 `/synthesize` 返回音频流外，其余接口统一以 JSON 返回业务码：
+- 所有接口统一以 JSON 返回业务码：
   - code=0 成功；code=1 失败；code=2 资源错误；code=3 参数错误
   - HTTP 状态通常为 200（业务码区分结果），少量兜底错误可能返回 4xx/5xx
 
 返回类型：
-- JSON：除 `/synthesize` 外的所有接口
-- audio/wav：`/synthesize`（整段 WAV 字节流）
+- JSON：所有接口
 
 

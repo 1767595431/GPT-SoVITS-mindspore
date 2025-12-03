@@ -50,6 +50,32 @@ conda install ffmpeg -y
 # conda install -c conda-forge 'ffmpeg<7'
 ```
 
+#### 关于自定义 Python 路径与 ffmpeg 找不到的问题
+
+如果你不是通过 `conda activate GPTSoVits` 启动服务，而是使用**自定义 Python 路径**，例如：
+
+```bash
+/root/autodl-tmp/env/GPTSoVits/bin/python api_ms.py --device 0 --host 0.0.0.0 --port 5400
+```
+
+即使已经在该环境里执行过 `conda install ffmpeg -y`，仍有可能在合成任务时遇到：
+
+> FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
+
+原因是：当前进程的 `PATH` 中没有包含你自定义环境的 `bin` 目录，`ffmpeg-python` 在调用 `subprocess.Popen(["ffmpeg", ...])` 时找不到 `ffmpeg`。
+
+**解决方法：在启动命令前显式把环境的 bin 目录加入 PATH**，示例如下（按你的实际路径替换）：
+
+```bash
+cd /root/autodl-tmp/GPT-SoVITS/GPT-SoVITS-mindspore && \
+PATH="/root/autodl-tmp/env/GPTSoVits/bin:$PATH" \
+/root/autodl-tmp/env/GPTSoVits/bin/python api_ms.py --device 0 --host 0.0.0.0 --port 5400
+```
+
+要点：
+- 使用双引号：`PATH="/your/env/bin:$PATH"`，不要再额外嵌套引号；
+- 不需要额外设置 `FFMPEG_PATH`，当前代码只依赖 `PATH` 中能找到 `ffmpeg`。
+
 如需下载 MindSpore 对应的 `whl` 包，请参考官方文档或使用下述“在线安装（国内镜像）”流程。
 
 

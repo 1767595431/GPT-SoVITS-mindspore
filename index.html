@@ -16,7 +16,10 @@
     h2{margin:0 0 10px 0;padding:0;font-size:16px;color:var(--text)}
     .row{display:grid;grid-template-columns:repeat(2,minmax(300px,1fr));gap:16px}
     .row.row-wide{grid-template-columns:0.5fr 1.5fr}
-    @media (max-width: 980px){.row{grid-template-columns:1fr}}
+    .row.row-three{grid-template-columns:repeat(3,minmax(300px,1fr))}
+    .row.row-full{grid-template-columns:1fr}
+    @media (max-width: 1400px){.row.row-three{grid-template-columns:repeat(2,minmax(300px,1fr))}}
+    @media (max-width: 980px){.row{grid-template-columns:1fr} .row.row-three{grid-template-columns:1fr}}
     .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
     label{display:block;margin:8px 0 6px;color:var(--muted);font-size:12px}
     input,select,button{padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#0d1626;color:var(--text);outline:none}
@@ -69,8 +72,8 @@
       </div>
     </div>
 
-    <div class="row" style="margin-bottom:16px">
-      <div class="card" style="width:100%">
+    <div class="row row-three" style="margin-bottom:16px">
+      <div class="card">
         <h2>分类管理</h2>
         <form id="categoryForm" class="inline" style="flex-wrap:wrap;gap:12px">
           <label style="min-width:120px">分类名称</label>
@@ -86,9 +89,7 @@
           <tbody id="catBody"></tbody>
         </table>
       </div>
-    </div>
 
-    <div class="row row-wide">
       <div class="card">
       <h2>新增音模</h2>
       <form id="createForm">
@@ -105,12 +106,9 @@
         <input name="prompt_text" placeholder="可留空" />
         <label>参考文本语种</label>
         <select name="prompt_language">
-          <option>中文</option>
-          <option>英文</option>
-          <option>日文</option>
-          <option>中英混合</option>
-          <option>日英混合</option>
-          <option>多语种混合</option>
+          <option value="all_zh" selected>中文</option>
+          <option value="en">英文</option>
+          <option value="zh">中英混合</option>
         </select>
         <label>所属分类（多选）</label>
         <div class="dropdown" id="createCatDropdown">
@@ -127,6 +125,41 @@
       <div id="createMsg" class="muted"></div>
       </div>
 
+      <div class="card">
+      <h2>选择音模进行合成</h2>
+      <div id="synthBox">
+        <label>音模</label>
+        <select id="s_model"></select>
+        <label>用户ID</label>
+        <input id="user_id" placeholder="请输入用户ID（必填）" />
+        <label>任务ID</label>
+        <input id="task_id" placeholder="可留空，自动生成" />
+        <label>目标文本</label>
+        <input id="s_text" placeholder="请输入要合成的文本" />
+        <label>目标语种</label>
+        <select id="s_text_lang">
+          <option value="all_zh" selected>中文</option>
+          <option value="en">英文</option>
+          <option value="zh">中英混合</option>
+        </select>
+        <label>切分策略</label>
+        <select id="s_cut">
+          <option value="cut0">不切</option>
+          <option value="cut1" selected>凑四句一切</option>
+          <option value="cut2">凑50字一切</option>
+          <option value="cut3">按中文句号。切</option>
+          <option value="cut4">按英文句号.切</option>
+          <option value="cut5">按标点符号切</option>
+        </select>
+        <div class="inline" style="margin-top:12px;grid-column:1/-1">
+          <button id="t_btn" class="secondary">提交任务（排队）</button>
+        </div>
+        <div id="s_msg" class="muted" style="margin-top:6px"></div>
+      </div>
+      </div>
+    </div>
+
+    <div class="row row-full" style="margin-top:16px">
       <div class="card">
       <h2>音模列表</h2>
       <div class="inline">
@@ -155,41 +188,7 @@
       </div>
     </div>
 
-    <div class="row row-wide" style="margin-top:16px">
-      <div class="card">
-      <h2>选择音模进行合成</h2>
-      <div id="synthBox">
-        <label>音模</label>
-        <select id="s_model"></select>
-        <label>用户ID</label>
-        <input id="user_id" placeholder="请输入用户ID（必填）" />
-        <label>任务ID</label>
-        <input id="task_id" placeholder="可留空，自动生成" />
-        <label>目标文本</label>
-        <input id="s_text" placeholder="请输入要合成的文本" />
-        <label>目标语种</label>
-        <select id="s_text_lang">
-          <option>中文</option>
-          <option>英文</option>
-          <option>日文</option>
-          <option>中英混合</option>
-          <option>日英混合</option>
-          <option>多语种混合</option>
-        </select>
-        <label>切分策略</label>
-        <select id="s_cut">
-          <option>凑四句一切</option>
-          <option>凑50字一切</option>
-          <option>按中文句号。切</option>
-          <option>按英文句号.切</option>
-          <option>按标点符号切</option>
-        </select>
-        <div class="inline" style="margin-top:12px;grid-column:1/-1">
-          <button id="t_btn" class="secondary">提交任务（排队）</button>
-        </div>
-        <div id="s_msg" class="muted" style="margin-top:6px"></div>
-      </div>
-      </div>
+    <div class="row row-full" style="margin-top:16px">
       <div class="card">
       <h2>任务列表</h2>
       <div class="inline">
