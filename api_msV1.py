@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 from contextlib import asynccontextmanager
-from urllib.parse import quote, quote_plus, unquote_plus
+from urllib.parse import quote_plus, unquote_plus
 
 import redis
 
@@ -47,8 +47,6 @@ def _apply_cli_overrides():
     - --device <idx>                   指定使用的 NPU(Ascend) 编号（等效于设置 infer_device_id）
     - --port <port>                    指定服务端口（等效设置 infer_api_port）
     - --host <host>                    指定服务绑定地址（设置 infer_api_host，默认 0.0.0.0）
-    - --root-path <path>               指定 API 路径前缀（如：/tts）
-    - --base-url <url>                 指定基础域名 URL（如：https://aiservice.vip.cpolar.cn）
     """
     try:
         argv = sys.argv[1:]
@@ -73,12 +71,6 @@ def _apply_cli_overrides():
         host = _get_flag_value(["--host"])
         if host is not None and host.strip() != "":
             os.environ["infer_api_host"] = host.strip()
-        root_path = _get_flag_value(["--root-path", "--prefix"])
-        if root_path is not None and root_path.strip() != "":
-            os.environ["infer_api_root_path"] = root_path.strip()
-        base_url = _get_flag_value(["--base-url", "--domain"])
-        if base_url is not None and base_url.strip() != "":
-            os.environ["infer_api_base_url"] = base_url.strip()
     except Exception:
         # 任何解析异常均忽略，按默认值运行
         pass
@@ -278,8 +270,6 @@ if "_CUDA_VISIBLE_DEVICES" in os.environ:
 is_half = eval(os.environ.get("is_half", "True"))
 api_port = int(os.environ.get("infer_api_port", 9881))
 api_host = os.environ.get("infer_api_host", "0.0.0.0")
-api_root_path = os.environ.get("infer_api_root_path", "")
-api_base_url = os.environ.get("infer_api_base_url", "")
 
 # MindSpore 设备上下文（固定 Ascend，仅通过 --device 选择 NPU 编号）
 device_id_env = os.environ.get("infer_device_id")
@@ -761,9 +751,12 @@ def synthesize_once(
         print("进度:", f"{seg_idx}/{total_segments}", f"({seg_idx * 100.0 / total_segments:.0f}%")
 
     final_audio = (np.concatenate(audio_opt, 0) * 32768).astype(np.int16)
-    # 落地保存到 ./output/<user_id>/<task_id>/<task_id>.wav（直接使用原始名称）
-    uid = save_user_id.strip() if save_user_id else "anonymous"
-    tid = save_task_id.strip() if save_task_id else datetime.now().strftime("T%Y%m%d%H%M%S")
+    # 落地保存到 ./output/<user_id>/<task_id>/<task_id>.wav
+    def _sanitize(s: Optional[str]) -> str:
+        s = str(s or "").strip()
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", s) or "anonymous"
+    uid = _sanitize(save_user_id) if save_user_id is not None else "anonymous"
+    tid = _sanitize(save_task_id) if save_task_id is not None else datetime.now().strftime("T%Y%m%d%H%M%S")
     user_dir = OUT_DIR / uid / tid
     user_dir.mkdir(parents=True, exist_ok=True)
     out_path = user_dir / f"{tid}.wav"
@@ -1009,9 +1002,12 @@ def _run_task(task_id: str):
         try: tlog.info("progress %d/%d (%d%%)", segments_done, total_segments, progress)
         except Exception: pass
 
-    # 直接写到 output/<user_id>/<task_id>/<task_id>.wav（直接使用原始名称）
-    uid = task.get("user_id", "anonymous").strip() or "anonymous"
-    tid = task_id.strip() if task_id else datetime.now().strftime("T%Y%m%d%H%M%S")
+    # 直接写到 output/<user_id>/<task_id>/<task_id>.wav
+    def _sanitize(s: Optional[str]) -> str:
+        s = str(s or "").strip()
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", s) or "anonymous"
+    uid = _sanitize(task.get("user_id"))
+    tid = _sanitize(task_id)
     user_dir = OUT_DIR / uid / tid
     user_dir.mkdir(parents=True, exist_ok=True)
     out_path = user_dir / f"{tid}.wav"
@@ -1092,70 +1088,11 @@ app = FastAPI(
     version="0.1.0",
     openapi_tags=_tags_metadata,
     lifespan=_lifespan,
-    root_path=api_root_path,
 )
 
 app.mount("/audio", StaticFiles(directory=str(AUDIO_ROOT)), name="audio")
 # 提供输出目录下载
 app.mount("/output", StaticFiles(directory=str(OUT_DIR)), name="output")
-
-
-# ---------- 辅助函数：获取基础 URL ----------
-def _get_base_url(request: Request) -> str:
-    """
-    获取基础 URL，优先级：
-    1. 使用 --base-url（如果指定）
-    2. 使用 --host 和 --port 参数构建
-    """
-    if api_base_url:
-        # 如果指定了 base_url，需要拼接 root_path
-        base = api_base_url.rstrip("/")
-        if api_root_path:
-            return f"{base}{api_root_path}"
-        return base
-    
-    # 使用启动参数 --host 和 --port 构建 URL
-    # 协议：443 端口用 https，其他用 http
-    scheme = "https" if api_port == 443 else "http"
-    
-    # 构建 host:port
-    if (scheme == "http" and api_port != 80) or (scheme == "https" and api_port != 443):
-        # 非标准端口，需要加端口号
-        host_with_port = f"{api_host}:{api_port}"
-    else:
-        # 标准端口，不加端口号
-        host_with_port = api_host
-    
-    base = f"{scheme}://{host_with_port}"
-    
-    # 如果有 root_path，添加它
-    if api_root_path:
-        base = f"{base}{api_root_path}"
-    
-    return base.rstrip("/")
-
-
-def _normalize_task_urls(task_data: dict, base_url: str) -> dict:
-    """
-    将任务数据中的相对 URL 转换为完整 URL，并对路径中的中文等特殊字符进行编码
-    """
-    if not task_data:
-        return task_data
-    
-    result = task_data.copy()
-    
-    # 处理 result_url
-    if "result_url" in result and result["result_url"]:
-        url = result["result_url"]
-        if url and not url.startswith("http://") and not url.startswith("https://"):
-            # 相对路径，需要对各部分进行 URL 编码
-            parts = url.split('/')
-            encoded_parts = [quote(part, safe='') if part else part for part in parts]
-            encoded_url = '/'.join(encoded_parts)
-            # 补全为完整 URL
-            result["result_url"] = f"{base_url}{encoded_url}"
-    
-    return result
 
 
 # ---------- JSON 存储（进程内外锁） ----------
@@ -1311,21 +1248,8 @@ def _find_model(model_id: str) -> Optional[dict]:
 
 
 def _sanitize_fs_name(value: Optional[str]) -> str:
-    """
-    文件名安全化：
-    - 优先保留字母数字下划线连字符
-    - 如果包含中文或特殊字符，使用标准 URL 编码（保留 %）
-    """
     s = str(value or "").strip()
-    if not s:
-        return "anonymous"
-    # 尝试简单替换
-    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", s)
-    # 如果结果全是下划线或空（说明原始字符串是纯特殊字符/中文），使用标准 URL 编码
-    if not sanitized or sanitized.replace("_", "").replace("-", "") == "":
-        # 使用标准 URL 编码（保留 %）
-        return quote_plus(s) or "anonymous"
-    return sanitized
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", s) or "anonymous"
 
 
 def _clean_category_ids(cat_ids: list[str]) -> list[str]:
@@ -1708,7 +1632,7 @@ except Exception as e:
 
 @app.get("/healthz", summary="健康检查", tags=["其他"])
 async def healthz(request: Request):
-    base = _get_base_url(request)
+    base = str(request.base_url).rstrip("/")
     return {"status": "ok", "index_url": f"{base}/index"}
 
 
@@ -1831,7 +1755,7 @@ async def create_voice_model(
         shutil.rmtree(model_dir, ignore_errors=True)
         return _err_param("参考音频解析失败，请上传合法的音频文件（WAV/MP3/OGG 等）")
 
-    base = _get_base_url(request)
+    base = str(request.base_url).rstrip('/')
     avatar_url = f"{base}/audio/{model_id}/{avatar_filename}"
     refer_wav_url = f"{base}/audio/{model_id}/{refer_filename}"
 
@@ -1880,7 +1804,7 @@ async def list_voice_models(request: Request, page: int = 1, page_size: int = 10
     total = len(items)
     start = (page - 1) * page_size
     end = start + page_size
-    base = _get_base_url(request)
+    base = str(request.base_url).rstrip('/')
     page_items = []
     for it in items[start:end]:
         model_id = it.get("model_id", "")
@@ -1982,9 +1906,8 @@ async def delete_voice_category(category_id: str):
 
 
 @app.get("/", summary="根路径重定向", tags=["页面"])
-async def root_redirect(request: Request):
-    # 使用相对路径，避免 root_path 问题
-    return RedirectResponse(url="index", status_code=302)
+async def root_redirect():
+    return RedirectResponse(url="/index")
 
 
 @app.get("/index", summary="Index 页面", tags=["页面"])
@@ -1996,9 +1919,8 @@ async def index_page():
 
 
 @app.get("/manager", summary="管理页重定向", tags=["页面"])
-async def manager_redirect(request: Request):
-    # 使用相对路径，避免 root_path 问题
-    return RedirectResponse(url="index", status_code=302)
+async def manager_redirect():
+    return RedirectResponse(url="/index")
 
 
 # ---------- 任务接口 ----------
@@ -2045,15 +1967,11 @@ async def submit_task(request: Request):
     tl.info("wait user_id=%s model_id=%s text_len=%d", user_id, entry.get("model_id"), len(entry.get("text", "")))
     _enqueue_task(task_id)
     _ensure_worker()
-    # 补全 URL（虽然刚创建时没有 result_url，但为了一致性还是处理一下）
-    base = _get_base_url(request)
-    entry = _normalize_task_urls(entry, base)
     return _ok(entry)
 
 
 @app.get("/voice-tasks", summary="查询任务（批量/分页）", tags=["任务队列"])
-async def list_tasks(request: Request, ids: str = None, task_ids: str = None, page: int = 1, page_size: int = 10, user_id: str = None, task_id: str = None):
-    base = _get_base_url(request)
+async def list_tasks(ids: str = None, task_ids: str = None, page: int = 1, page_size: int = 10, user_id: str = None, task_id: str = None):
     normalized_ids: list[str] = []
     for raw in (ids, task_ids):
         if raw:
@@ -2065,8 +1983,6 @@ async def list_tasks(request: Request, ids: str = None, task_ids: str = None, pa
         if user_id is None or str(user_id).strip() == "":
             return _err_param("缺少 user_id")
         results = _fetch_tasks_by_ids(str(user_id).strip(), normalized_ids)
-        # 补全 URL
-        results = [_normalize_task_urls(task, base) for task in results]
         size = len(results)
         return _page_ok(results, size, 1, max(size, 1))
 
@@ -2075,14 +1991,11 @@ async def list_tasks(request: Request, ids: str = None, task_ids: str = None, pa
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     items, total = _fetch_tasks_page(str(user_id).strip(), page, page_size)
-    # 补全 URL
-    items = [_normalize_task_urls(task, base) for task in items]
     return _page_ok(items, total, page, page_size)
 
 
 @app.post("/voice-tasks/query", summary="批量查询任务（JSON）", tags=["任务队列"])
-async def list_tasks_query(request: Request, payload: dict):
-    base = _get_base_url(request)
+async def list_tasks_query(payload: dict):
     page = int(payload.get("page", 1))
     page_size = int(payload.get("page_size", 10))
     user_id = str(payload.get("user_id", "")).strip()
@@ -2092,27 +2005,20 @@ async def list_tasks_query(request: Request, payload: dict):
     if task_ids:
         ids = [str(t).strip() for t in task_ids if str(t).strip()]
         results = _fetch_tasks_by_ids(user_id, ids)
-        # 补全 URL
-        results = [_normalize_task_urls(task, base) for task in results]
         size = len(results)
         return _page_ok(results, size, 1, max(size, 1))
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     items, total = _fetch_tasks_page(user_id, page, page_size)
-    # 补全 URL
-    items = [_normalize_task_urls(task, base) for task in items]
     return _page_ok(items, total, page, page_size)
 
 
 @app.get("/voice-tasks/{task_id}", summary="查询单个任务", tags=["任务队列"])
-async def get_task(request: Request, task_id: str):
-    base = _get_base_url(request)
+async def get_task(task_id: str):
     task = _redis_get_task_by_task_id(task_id)
     if task is None:
         task = _get_task_from_index(task_id)
     if task is not None:
-        # 补全 URL
-        task = _normalize_task_urls(task, base)
         return _ok(task)
     return _err_resource("not found")
 

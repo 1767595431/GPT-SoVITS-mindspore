@@ -234,16 +234,7 @@
 
   <script>
     const $ = (s)=>document.querySelector(s);
-    // 自动获取 API 基础路径（支持带前缀的情况，如 /tts）
-    const API = (() => {
-      const path = location.pathname;
-      // 如果访问 /tts/index 或 /tts/，则基础路径是 /tts
-      // 如果访问 /index 或 /，则基础路径是 ''
-      const basePath = path.replace(/\/(index(.html)?)?$/, '');
-      const apiBase = location.origin + basePath;
-      console.log('[API] 基础路径:', apiBase, '(pathname:', path, ')');
-      return apiBase;
-    })();
+    const API = location.origin;
     let page=1,total=0,pageSize=10;
     let t_page=1,t_total=0,t_pageSize=10;
     const taskFilter = { userId: "", taskIds: [] };
@@ -524,8 +515,7 @@
         const tr = document.createElement('tr');
         const ct = new Date((it.created_at||0)*1000).toLocaleString();
         const ut = new Date((it.updated_at||0)*1000).toLocaleString();
-        // result_url 已经是完整 URL（包含域名和前缀）
-        const res_href = it.result_url || '';
+        const res_href = it.result_url || (it.result_path? it.result_path.replace(/^\./,'') : '');
         tr.innerHTML = `<td>${it.task_id||''}</td>
                         <td>${it.user_id||''}</td>
                         <td>${it.status||''}</td>

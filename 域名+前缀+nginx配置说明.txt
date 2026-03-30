@@ -1,0 +1,52 @@
+基本启动（无前缀）：
+python api_ms.py --device 0 --host 0.0.0.0 --port 5400
+
+带nginx前缀启动（匹配当前nginx配置/tts/）：
+python api_ms.py --device 0 --host 0.0.0.0 --port 5400 --root-path /tts --base-url https://aiservice.vip.cpolar.cn
+
+多NPU启动（使用0,1号NPU）：
+python api_ms.py --device 0,1 --host 0.0.0.0 --port 5400
+
+所有可用参数：
+
+--device: NPU设备ID（如：0 或 0,1，默认：0）
+--host: 主机地址（默认：0.0.0.0）
+--port: 端口号（默认：9881）
+--root-path 或 --prefix: API路径前缀（如：/tts），用于nginx反向代理
+--base-url 或 --domain: 基础域名URL（如：https://aiservice.vip.cpolar.cn），用于生成完整的资源URL
+
+说明：
+1. --root-path 用于配置 FastAPI 的 root_path，使其能够正确处理带前缀的请求
+2. --base-url 用于生成返回给客户端的完整资源URL（如头像、音频文件等）
+3. 如果不指定 --base-url，系统会自动使用请求中的域名和协议
+
+访问地址示例（带nginx前缀 /tts/ 的情况）：
+- 前端管理页：https://aiservice.vip.cpolar.cn/tts/
+- 前端管理页：https://aiservice.vip.cpolar.cn/tts/index
+- API文档：https://aiservice.vip.cpolar.cn/tts/docs
+- 健康检查：https://aiservice.vip.cpolar.cn/tts/healthz
+- 音模列表：https://aiservice.vip.cpolar.cn/tts/voice-models
+- 任务提交：https://aiservice.vip.cpolar.cn/tts/voice-tasks
+
+注意事项：
+1. 所有接口返回的资源URL（如任务结果、头像、音频文件等）会自动包含完整的域名和前缀
+2. 前端页面使用相对路径跳转，可以正确处理带前缀的情况
+3. 如果前端访问不到，请检查nginx配置中的 proxy_pass 是否正确（不要在末尾加斜杠）
+
+当前nginx配置（已通过中间件支持）：
+location /tts/ {
+    proxy_pass http://127.0.0.1:5400;  # 注意：没有斜杠，保留完整URI
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    
+    # 设置允许上传的最大文件大小（根据你的需求调整）
+    client_max_body_size 100M;  # 允许上传最大 100MB 的分片
+    
+    # 可选：增加超时时间（用于大文件上传）
+    proxy_connect_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_read_timeout 600s;
+}
+
