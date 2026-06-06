@@ -1,0 +1,27 @@
+1、任务状态说明wait(等待)、run(运行)、done(完成)、error(失败)
+2、状态码(0.成功 1.失败 2.资源错误 3.参数错误)
+3、基础的json响应格式
+{
+  "code": 0,
+  "message": "",
+  "data": {}
+}
+
+4、分页的数据结构要为
+{
+  "code": 0,
+  "message": "",
+  "data": {
+    "total": 9,
+    "pageIndex": 1,
+    "pageSize": 10,
+    "data": []
+}
+
+
+5、单一数据返回的话就,正常写到data里
+{
+  "code": 0,
+  "message": "",
+  "data": {}
+}
