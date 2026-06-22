@@ -1574,6 +1574,7 @@ def _redis_upsert_task(entry: dict):
         if not user_id or not task_id:
             return
         updated_at = int(entry.get("updated_at", int(time.time())))
+        created_at = int(entry.get("created_at", updated_at))
         payload = json.dumps(entry, ensure_ascii=False)
         mapping = {
             "task_id": task_id,
@@ -1590,7 +1591,8 @@ def _redis_upsert_task(entry: dict):
         }
         client.hset(_redis_hash_key(user_id, task_id), mapping=mapping)
         client.zadd(TASK_INDEX_KEY, {_redis_member(user_id, task_id): updated_at})
-        client.zadd(_redis_user_index_key(user_id), {_redis_quote(task_id): updated_at})
+        # 用户任务列表按 created_at 倒序（新任务在前）；不因进度更新改变排序
+        client.zadd(_redis_user_index_key(user_id), {_redis_quote(task_id): created_at})
         client.set(_redis_lookup_key(task_id), _redis_quote(user_id))
     except Exception:
         logging.getLogger("api_ms").warning("同步任务到 Redis 失败", exc_info=True)
@@ -1709,6 +1711,7 @@ def _fetch_tasks_by_ids(user_id: str, ids: list[str]) -> list[dict]:
             task = local_cache.get(task_id)
         if task:
             results.append(task)
+    results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return results
 
 

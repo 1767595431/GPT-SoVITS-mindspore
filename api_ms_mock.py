@@ -523,7 +523,9 @@ def _fetch_tasks_by_ids(user_id: str, ids: list[str]) -> list[dict]:
         for it in _read_task_store()
         if str(it.get("user_id", "")).strip() == str(user_id).strip()
     }
-    return [cache[tid] for tid in ids if tid in cache]
+    results = [cache[tid] for tid in ids if tid in cache]
+    results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+    return results
 
 
 def _fetch_tasks_page(user_id: str, page: int, page_size: int) -> tuple[list[dict], int]:
