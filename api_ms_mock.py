@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import random
 import argparse
+import configparser
 import json
 import logging
 import math
@@ -45,7 +46,9 @@ from io import BytesIO
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote, quote_plus, urlparse
+from urllib.parse import quote, quote_plus, unquote_plus, urlparse
+
+import redis
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -92,6 +95,31 @@ MOCK_MAX_CONCURRENT = max(1, int(os.environ.get("MOCK_MAX_CONCURRENT", "4")))
 MOCK_DEFAULT_SAMPLE_RATE = int(os.environ.get("MOCK_DEFAULT_SAMPLE_RATE", "32000"))
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+CONFIG_PATH = PROJECT_ROOT / "config.ini"
+_config = configparser.ConfigParser()
+if CONFIG_PATH.exists():
+    try:
+        _config.read(CONFIG_PATH, encoding="utf-8")
+    except Exception:
+        logging.getLogger("api_ms_mock").warning("读取 config.ini 失败", exc_info=True)
+
+
+def _cfg(section: str, option: str, fallback: str) -> str:
+    try:
+        if _config.has_option(section, option):
+            return _config.get(section, option)
+    except Exception:
+        pass
+    return fallback
+
+
+REDIS_HOST = os.environ.get("REDIS_HOST", _cfg("redis", "host", "127.0.0.1"))
+REDIS_PORT = int(os.environ.get("REDIS_PORT", _cfg("redis", "port", "6379")))
+REDIS_DB = int(os.environ.get("REDIS_DB", _cfg("redis", "db", "0")))
+REDIS_USERNAME = os.environ.get("REDIS_USERNAME", _cfg("redis", "username", ""))
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", _cfg("redis", "password", ""))
+redis_client: Optional[redis.Redis] = None
+
 RUNTIME_ROOT = PROJECT_ROOT / "mock_runtime"
 AUDIO_ROOT = RUNTIME_ROOT / "audio"
 OUT_DIR = RUNTIME_ROOT / "output"
@@ -487,12 +515,215 @@ def _ensure_categories_exist(cat_ids: list[str]) -> tuple[bool, list[str]]:
     return len(missing) == 0, missing
 
 
+# ---------------------------------------------------------------------------
+# Redis（与 api_ms.py 一致；key 前缀 tts:mock: 与正式环境隔离）
+# ---------------------------------------------------------------------------
+
+TASK_HASH_PREFIX = "tts:mock:task"
+TASK_INDEX_KEY = "tts:mock:tasks:index"
+USER_INDEX_PREFIX = "tts:mock:user"
+TASK_LOOKUP_PREFIX = "tts:mock:task_lookup"
+
+
+def _init_redis() -> bool:
+    global redis_client
+    if redis_client is not None:
+        return True
+    try:
+        kwargs = {
+            "host": REDIS_HOST,
+            "port": REDIS_PORT,
+            "db": REDIS_DB,
+            "decode_responses": True,
+        }
+        if REDIS_USERNAME:
+            kwargs["username"] = REDIS_USERNAME
+        if REDIS_PASSWORD:
+            kwargs["password"] = REDIS_PASSWORD
+        client = redis.Redis(**kwargs)
+        client.ping()
+        redis_client = client
+        logger.info(
+            "Redis 已连接：%s:%s/%s user=%s",
+            REDIS_HOST,
+            REDIS_PORT,
+            REDIS_DB,
+            REDIS_USERNAME or "(default)",
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Redis 不可用，继续使用本地存储：%s", exc)
+        redis_client = None
+        return False
+
+
+def _get_redis_client() -> Optional[redis.Redis]:
+    if redis_client is None:
+        if not _init_redis():
+            return None
+    return redis_client
+
+
+def _redis_quote(value: str) -> str:
+    return quote_plus(str(value or ""))
+
+
+def _redis_unquote(value: str) -> str:
+    return unquote_plus(value or "")
+
+
+def _redis_hash_key(user_id: str, task_id: str) -> str:
+    return f"{TASK_HASH_PREFIX}:{_redis_quote(user_id)}:{_redis_quote(task_id)}"
+
+
+def _redis_user_index_key(user_id: str) -> str:
+    return f"{USER_INDEX_PREFIX}:{_redis_quote(user_id)}:index"
+
+
+def _redis_lookup_key(task_id: str) -> str:
+    return f"{TASK_LOOKUP_PREFIX}:{_redis_quote(task_id)}"
+
+
+def _redis_member(user_id: str, task_id: str) -> str:
+    return f"{_redis_quote(user_id)}:{_redis_quote(task_id)}"
+
+
+def _redis_upsert_task(entry: dict):
+    client = _get_redis_client()
+    if client is None:
+        return
+    try:
+        user_id = str(entry.get("user_id", "")).strip()
+        task_id = str(entry.get("task_id", "")).strip()
+        if not user_id or not task_id:
+            return
+        updated_at = int(entry.get("updated_at", int(time.time())))
+        created_at = int(entry.get("created_at", updated_at))
+        payload = json.dumps(entry, ensure_ascii=False)
+        mapping = {
+            "task_id": task_id,
+            "user_id": user_id,
+            "status": entry.get("status", ""),
+            "progress": str(entry.get("progress", 0)),
+            "segments_done": str(entry.get("segments_done", 0)),
+            "total_segments": str(entry.get("total_segments", 0)),
+            "result_url": entry.get("result_url", "") or "",
+            "error": entry.get("error", "") or "",
+            "updated_at": str(updated_at),
+            "created_at": str(created_at),
+            "payload": payload,
+        }
+        client.hset(_redis_hash_key(user_id, task_id), mapping=mapping)
+        client.zadd(TASK_INDEX_KEY, {_redis_member(user_id, task_id): updated_at})
+        client.zadd(_redis_user_index_key(user_id), {_redis_quote(task_id): created_at})
+        client.set(_redis_lookup_key(task_id), _redis_quote(user_id))
+    except Exception:
+        logger.warning("同步任务到 Redis 失败", exc_info=True)
+
+
+def _redis_delete_task(user_id: Optional[str], task_id: str):
+    client = _get_redis_client()
+    if client is None:
+        return
+    try:
+        if user_id:
+            client.delete(_redis_hash_key(user_id, task_id))
+            client.zrem(TASK_INDEX_KEY, _redis_member(user_id, task_id))
+            client.zrem(_redis_user_index_key(user_id), _redis_quote(task_id))
+        client.delete(_redis_lookup_key(task_id))
+    except Exception:
+        logger.warning("从 Redis 删除任务失败", exc_info=True)
+
+
+def _redis_get_task(user_id: str, task_id: str) -> Optional[dict]:
+    client = _get_redis_client()
+    if client is None:
+        return None
+    try:
+        data = client.hgetall(_redis_hash_key(user_id, task_id))
+        if not data:
+            return None
+        payload = data.get("payload")
+        if payload:
+            try:
+                return json.loads(payload)
+            except Exception:
+                pass
+        result = {k: data.get(k) for k in data}
+        result["task_id"] = result.get("task_id") or task_id
+        result["user_id"] = result.get("user_id") or user_id
+        for key in ("progress", "segments_done", "total_segments"):
+            if key in result:
+                try:
+                    result[key] = int(float(result[key]))
+                except Exception:
+                    pass
+        for key in ("updated_at", "created_at"):
+            if key in result:
+                try:
+                    result[key] = int(float(result[key]))
+                except Exception:
+                    pass
+        return result
+    except Exception:
+        logger.warning("从 Redis 获取任务失败", exc_info=True)
+        return None
+
+
+def _redis_get_task_by_task_id(task_id: str) -> Optional[dict]:
+    client = _get_redis_client()
+    if client is None:
+        return None
+    try:
+        user_raw = client.get(_redis_lookup_key(task_id))
+        if not user_raw:
+            return None
+        user_id = _redis_unquote(user_raw)
+        return _redis_get_task(user_id, task_id)
+    except Exception:
+        logger.warning("通过 task_id 获取 Redis 任务失败", exc_info=True)
+        return None
+
+
+def _redis_list_user_tasks(user_id: str, page: int, page_size: int) -> tuple[Optional[list], int]:
+    client = _get_redis_client()
+    if client is None:
+        return None, 0
+    try:
+        key = _redis_user_index_key(user_id)
+        total = client.zcard(key)
+        if total == 0:
+            return [], 0
+        start = (page - 1) * page_size
+        end = start + page_size - 1
+        members = client.zrevrange(key, start, end)
+        items = []
+        for member in members:
+            tid = _redis_unquote(member)
+            task = _redis_get_task(user_id, tid)
+            if task:
+                items.append(task)
+        return items, total
+    except Exception:
+        logger.warning("从 Redis 分页读取任务失败", exc_info=True)
+        return None, 0
+
+
+def _redis_sync_local_tasks():
+    client = _get_redis_client()
+    if client is None:
+        return
+    for entry in _read_task_store():
+        _redis_upsert_task(entry)
+
+
 def _update_task_index(entry: dict):
     items = _read_task_store()
     items = [it for it in items if it.get("task_id") != entry.get("task_id")]
     items.insert(0, entry)
     items = sorted(items, key=lambda x: x.get("created_at", 0), reverse=True)
     _write_task_store(items)
+    _redis_upsert_task(entry)
 
 
 def _get_task_from_index(task_id: str) -> Optional[dict]:
@@ -518,17 +749,30 @@ def _remove_from_index(task_id: str) -> Optional[dict]:
 
 def _fetch_tasks_by_ids(user_id: str, ids: list[str]) -> list[dict]:
     ids = [str(i).strip() for i in ids if str(i).strip()]
-    cache = {
-        it.get("task_id"): it
-        for it in _read_task_store()
-        if str(it.get("user_id", "")).strip() == str(user_id).strip()
-    }
-    results = [cache[tid] for tid in ids if tid in cache]
+    if not ids:
+        return []
+    results = []
+    local_cache = None
+    for task_id in ids:
+        task = _redis_get_task(user_id, task_id)
+        if task is None:
+            if local_cache is None:
+                local_cache = {
+                    it.get("task_id"): it
+                    for it in _read_task_store()
+                    if str(it.get("user_id", "")).strip() == str(user_id).strip()
+                }
+            task = local_cache.get(task_id)
+        if task:
+            results.append(task)
     results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return results
 
 
 def _fetch_tasks_page(user_id: str, page: int, page_size: int) -> tuple[list[dict], int]:
+    redis_items, redis_total = _redis_list_user_tasks(user_id, page, page_size)
+    if redis_items is not None:
+        return redis_items, redis_total
     items = [
         it
         for it in _read_task_store()
@@ -780,6 +1024,9 @@ _setup_access_logger()
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     logging.basicConfig(level=logging.INFO)
+    redis_ready = _init_redis()
+    if redis_ready:
+        _redis_sync_local_tasks()
     logger.info(
         "Mock API 已启动 | port=%s | runtime=%s | max_concurrent=%s | segment_delay=%.2fs",
         api_port,
@@ -1194,7 +1441,9 @@ async def list_tasks_query(request: Request, payload: dict):
 @app.get("/voice-tasks/{task_id}", summary="查询单个任务", tags=["任务队列"])
 async def get_task(request: Request, task_id: str):
     base = _get_base_url(request)
-    task = _get_task_from_index(task_id)
+    task = _redis_get_task_by_task_id(task_id)
+    if task is None:
+        task = _get_task_from_index(task_id)
     if task is not None:
         return _ok(_normalize_task_urls(task, base))
     return _err_resource("not found")
@@ -1204,9 +1453,13 @@ async def get_task(request: Request, task_id: str):
 async def delete_task(task_id: str):
     _mark_cancel(task_id)
     entry = _remove_from_index(task_id)
+    if entry is None:
+        entry = _redis_get_task_by_task_id(task_id)
     if entry is not None:
+        _redis_delete_task(entry.get("user_id"), task_id)
         _cleanup_task_artifacts(entry)
         return _ok({"removed": True})
+    _redis_delete_task(None, task_id)
     return _ok({"removed": False})
 
 

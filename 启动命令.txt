@@ -1,0 +1,5 @@
+正式服务（api_ms.py）：
+python api_ms.py --device 0 --host 0.0.0.0 --port 9881 --root-path /ttsHttp --base-url https://36.136.54.165/media
+
+测试模拟服务（api_ms_mock.py）：
+python api_ms_mock.py --host 0.0.0.0 --port 5400 --root-path /ttsHttp --base-url https://36.136.54.165/media

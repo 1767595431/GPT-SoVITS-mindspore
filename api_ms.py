@@ -169,6 +169,8 @@ def _parse_duration(raw: str, fallback: int) -> int:
 REDIS_HOST = os.environ.get("REDIS_HOST", _cfg("redis", "host", "127.0.0.1"))
 REDIS_PORT = int(os.environ.get("REDIS_PORT", _cfg("redis", "port", "6379")))
 REDIS_DB = int(os.environ.get("REDIS_DB", _cfg("redis", "db", "0")))
+REDIS_USERNAME = os.environ.get("REDIS_USERNAME", _cfg("redis", "username", ""))
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", _cfg("redis", "password", ""))
 
 default_retention = _cfg("cleanup", "retention", "604800")
 TASK_RETENTION_SECONDS = _parse_duration(os.environ.get("TASK_RETENTION_SECONDS", default_retention), 604800)
@@ -1515,10 +1517,26 @@ def _init_redis() -> bool:
     if redis_client is not None:
         return True
     try:
-        client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
+        kwargs = {
+            "host": REDIS_HOST,
+            "port": REDIS_PORT,
+            "db": REDIS_DB,
+            "decode_responses": True,
+        }
+        if REDIS_USERNAME:
+            kwargs["username"] = REDIS_USERNAME
+        if REDIS_PASSWORD:
+            kwargs["password"] = REDIS_PASSWORD
+        client = redis.Redis(**kwargs)
         client.ping()
         redis_client = client
-        logging.getLogger("api_ms").info("Redis 已连接：%s:%s/%s", REDIS_HOST, REDIS_PORT, REDIS_DB)
+        logging.getLogger("api_ms").info(
+            "Redis 已连接：%s:%s/%s user=%s",
+            REDIS_HOST,
+            REDIS_PORT,
+            REDIS_DB,
+            REDIS_USERNAME or "(default)",
+        )
         return True
     except Exception as exc:
         logging.getLogger("api_ms").warning("Redis 不可用，继续使用本地存储：%s", exc)
